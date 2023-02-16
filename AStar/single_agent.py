@@ -142,8 +142,14 @@ def linf_norm(start: Coordinate, end: Coordinate) -> int:
 
 
 def animation_step(
-    i: int, im: Any, history: list[np.ndarray], path: list[Coordinate]
+    i: int, im: Any, history: list[np.ndarray], path: list[Coordinate], arrows: Any
 ) -> list[Any]:
+    if i == 0:
+        # Reset arrows so they won't appear when the animation repeats
+        for a in arrows:
+            a.remove()
+        arrows.clear()
+
     if i < len(history):
         # Draw each iteration of the search algorithm
         im.set_array(history[i])
@@ -152,7 +158,7 @@ def animation_step(
         j = i - len(history)
         (from_x, from_y) = path[j]
         (to_x, to_y) = path[j + 1]
-        im.axes.arrow(
+        arrow = im.axes.arrow(
             from_x,
             from_y,
             (to_x - from_x) * 0.8,
@@ -161,6 +167,7 @@ def animation_step(
             length_includes_head=True,
             zorder=2,
         )
+        arrows.append(arrow)
     return [im]
 
 
@@ -194,14 +201,15 @@ def animate_search(
     ax.annotate("GOAL", goal, ha="center", va="center")
     for obstacle in obstacles:
         ax.annotate(chr(174), obstacle, fontsize="xx-large", ha="center", va="center")
+    arrows = []
 
     _anim = FuncAnimation(
         fig,
         animation_step,
-        fargs=(im, history, path),
+        fargs=(im, history, path, arrows),
         frames=len(history) + len(path) - 1,
         interval=200,
-        repeat=False,
+        repeat_delay=3000,
     )
 
     plt.show()
