@@ -88,8 +88,11 @@ class SingleAgentAStar:
 
 def animation_step(i, im, history: list[np.ndarray], path: list[Coordinate]):
     if i < len(history):
+        # Draw each iteration of the search algorithm
         im.set_array(history[i])
     else:
+        # Animate the path that was found
+        im.set_array(history[0]) #TODO decide if I want this, or leave it to show which areas never had to be explored
         j = i - len(history)
         (from_x, from_y) = path[j]
         (to_x, to_y) = path[j + 1]
@@ -134,7 +137,7 @@ def animate_search(
         animation_step,
         fargs=(im, history, path),
         frames=len(history) + len(path) - 1,
-        interval=2,
+        interval=100,
         repeat=False,
     )
 
