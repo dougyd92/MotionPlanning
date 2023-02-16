@@ -1,7 +1,7 @@
-# import ast
-from collections import deque
+from ast import literal_eval
 from configparser import ConfigParser
 from enum import IntEnum
+from queue import PriorityQueue
 from typing import Any
 
 from matplotlib.animation import FuncAnimation
@@ -14,29 +14,44 @@ from typing_extensions import TypeAlias
 class NodeState(IntEnum):
     EMPTY = 0
     START = 1
-    REACHED = 2
-    FRONTIER = 3
-    GOAL = 4
+    GOAL = 2
+    REACHED = 3
+    FRONTIER = 4
+    OBSTACLE = 5
+    IMPASSABLE = 6
 
 
 Coordinate: TypeAlias = tuple[int, int]
+PrioritizedCoord: TypeAlias = tuple[int, Coordinate]
 
 
 class SingleAgentAStar:
     """
     Not actually A-Star yet.
-    Started with BFS to get the main program structure and animation.
+    Started with Dijkstra's to get the main program structure and animation.
     """
 
     def __init__(
-        self, height: int, width: int, start: Coordinate, goal: Coordinate
+        self,
+        height: int,
+        width: int,
+        start: Coordinate,
+        goal: Coordinate,
+        obstacles: list[Coordinate],
+        obstacle_cost: int,
+        barriers: list[Coordinate],
     ) -> None:
         self.height = height
         self.width = width
         self.start = start
         self.goal = goal
-        self.frontier: deque[Coordinate] = deque()
+        self.obstacles = obstacles
+        self.obstacle_cost = obstacle_cost
+        self.barriers = barriers
+
+        self.frontier: PriorityQueue[PrioritizedCoord] = PriorityQueue()
         self.reached_from: dict[Coordinate, Coordinate] = {}
+        self.cost_to_reach: dict[Coordinate, int] = {}
         self.history: list[np.ndarray] = []
         self.update_history()
 
@@ -51,29 +66,47 @@ class SingleAgentAStar:
             neighbors.append((x + 1, y))
         if y < self.height - 1:
             neighbors.append((x, y + 1))
-        return neighbors
+        return [node for node in neighbors if node not in self.barriers]
+
+    def get_cost(self, coordinate: Coordinate) -> int:
+        if coordinate in self.obstacles:
+            return self.obstacle_cost
+        else:
+            return 1
 
     def update_history(self) -> None:
         grid = np.zeros((self.height, self.width))
         grid[self.goal[1]][self.goal[0]] = NodeState.GOAL
+        grid[self.start[1]][self.start[0]] = NodeState.START
+        for x, y in self.obstacles:
+            grid[y][x] = NodeState.OBSTACLE
+        for x, y in self.barriers:
+            grid[y][x] = NodeState.IMPASSABLE
         for x, y in self.reached_from:
             grid[y][x] = NodeState.REACHED
-        for x, y in self.frontier:
+        for _, (x, y) in self.frontier.queue:
             grid[y][x] = NodeState.FRONTIER
-        grid[self.start[1]][self.start[0]] = NodeState.START
         self.history.append(grid)
 
     def perform_search(self) -> None:
-        self.frontier.append(self.start)
+        self.frontier.put((0, self.start))
         self.reached_from[self.start] = self.start
+        self.cost_to_reach[self.start] = 0
 
-        while len(self.frontier) > 0:
-            current_node = self.frontier.popleft()
+        while not self.frontier.empty():
+            (_, current_node) = self.frontier.get()
             if current_node == self.goal:
                 break
             for next_node in self.get_neighbors(current_node):
-                if next_node not in self.reached_from:
-                    self.frontier.append(next_node)
+                updated_cost = self.cost_to_reach[current_node] + self.get_cost(
+                    next_node
+                )
+                if (
+                    next_node not in self.reached_from
+                    or updated_cost < self.cost_to_reach[next_node]
+                ):
+                    self.cost_to_reach[next_node] = updated_cost
+                    self.frontier.put((updated_cost, next_node))
                     self.reached_from[next_node] = current_node
                     self.update_history()
         self.update_history()
@@ -117,6 +150,7 @@ def animate_search(
     grid_width: int,
     start: Coordinate,
     goal: Coordinate,
+    obstacles: list[Coordinate],
     history: list[np.ndarray],
     path: list[Coordinate],
 ) -> None:
@@ -132,16 +166,22 @@ def animate_search(
     plt.setp(ax.get_yticklabels()[-1], visible=False)
     plt.yticks(va="top")
 
-    cmap = ListedColormap(["white", "red", "blue", "grey", "green"])
-    im = ax.imshow(history[0], cmap=cmap)
-    ax.annotate("START", start, ha="center")
-    ax.annotate("GOAL", goal, ha="center")
+    cmap = ListedColormap(
+        ["white", "darkblue", "green", "blue", "skyblue", "gray", "black"]
+    )
+    im = ax.imshow(history[0], cmap=cmap, vmin=0, vmax=max(NodeState))
+
+    ax.annotate("START", start, ha="center", va="center")
+    ax.annotate("GOAL", goal, ha="center", va="center")
+    for obstacle in obstacles:
+        ax.annotate(chr(174), obstacle, fontsize="xx-large", ha="center", va="center")
+
     _anim = FuncAnimation(
         fig,
         animation_step,
         fargs=(im, history, path),
         frames=len(history) + len(path) - 1,
-        interval=100,
+        interval=500,
         repeat=False,
     )
 
@@ -157,11 +197,18 @@ def main() -> None:
     goal_y = config["Goal"].getint("pos_y")
     robot_x = config["Agent"].getint("init_x")
     robot_y = config["Agent"].getint("init_y")
-    # obstacles_rocks = ast.literal_eval(config['Obstacles']['rocks'])
-    # obstacles_trees = ast.literal_eval(config['Obstacles']['trees'])
+    obstacle_cost = config["Obstacles"].getint("movement_cost")
+    obstacles = literal_eval(config["Obstacles"]["obstacles"])
+    barriers = literal_eval(config["Obstacles"]["barriers"])
 
     search = SingleAgentAStar(
-        grid_height, grid_width, (robot_x, robot_y), (goal_x, goal_y)
+        grid_height,
+        grid_width,
+        (robot_x, robot_y),
+        (goal_x, goal_y),
+        obstacles,
+        obstacle_cost,
+        barriers,
     )
     search.perform_search()
     path = search.reconstruct_best_path()
@@ -171,6 +218,7 @@ def main() -> None:
         grid_width,
         (robot_x, robot_y),
         (goal_x, goal_y),
+        obstacles,
         search.history,
         path,
     )
