@@ -2,13 +2,16 @@ from ast import literal_eval
 from configparser import ConfigParser
 from enum import IntEnum
 from queue import PriorityQueue
-from typing import Any
+from typing import Any, Callable
 
 from matplotlib.animation import FuncAnimation
 from matplotlib.colors import ListedColormap
 import matplotlib.pyplot as plt
 import numpy as np
 from typing_extensions import TypeAlias
+
+Coordinate: TypeAlias = tuple[int, int]
+PrioritizedCoord: TypeAlias = tuple[int, Coordinate]
 
 
 class NodeState(IntEnum):
@@ -21,14 +24,10 @@ class NodeState(IntEnum):
     IMPASSABLE = 6
 
 
-Coordinate: TypeAlias = tuple[int, int]
-PrioritizedCoord: TypeAlias = tuple[int, Coordinate]
-
-
 class SingleAgentAStar:
     """
-    Not actually A-Star yet.
-    Started with Dijkstra's to get the main program structure and animation.
+    Used to perform A* path search for a single agent and
+    a single objective, in an obstacle-filled grid environment.
     """
 
     def __init__(
@@ -40,6 +39,7 @@ class SingleAgentAStar:
         obstacles: list[Coordinate],
         obstacle_cost: int,
         barriers: list[Coordinate],
+        heuristic: Callable[[Coordinate, Coordinate], int],
     ) -> None:
         self.height = height
         self.width = width
@@ -48,12 +48,15 @@ class SingleAgentAStar:
         self.obstacles = obstacles
         self.obstacle_cost = obstacle_cost
         self.barriers = barriers
+        self.heuristic = heuristic
 
         self.frontier: PriorityQueue[PrioritizedCoord] = PriorityQueue()
         self.reached_from: dict[Coordinate, Coordinate] = {}
         self.cost_to_reach: dict[Coordinate, int] = {}
         self.history: list[np.ndarray] = []
         self.update_history()
+        self.iterations = 0
+        self.max_queue_size = 0
 
     def get_neighbors(self, coordinate: Coordinate) -> list[Coordinate]:
         (x, y) = coordinate
@@ -84,18 +87,22 @@ class SingleAgentAStar:
             grid[y][x] = NodeState.IMPASSABLE
         for x, y in self.reached_from:
             grid[y][x] = NodeState.REACHED
-        for _, (x, y) in self.frontier.queue:
+        for _priority, (x, y) in self.frontier.queue:
             grid[y][x] = NodeState.FRONTIER
         self.history.append(grid)
 
-    def perform_search(self) -> None:
+    def perform_search(self) -> bool:
+        goal_reached = False
         self.frontier.put((0, self.start))
         self.reached_from[self.start] = self.start
         self.cost_to_reach[self.start] = 0
 
         while not self.frontier.empty():
-            (_, current_node) = self.frontier.get()
+            self.iterations += 1
+            self.max_queue_size = max(self.max_queue_size, self.frontier.qsize())
+            (_priority, current_node) = self.frontier.get()
             if current_node == self.goal:
+                goal_reached = True
                 break
             for next_node in self.get_neighbors(current_node):
                 updated_cost = self.cost_to_reach[current_node] + self.get_cost(
@@ -106,10 +113,12 @@ class SingleAgentAStar:
                     or updated_cost < self.cost_to_reach[next_node]
                 ):
                     self.cost_to_reach[next_node] = updated_cost
-                    self.frontier.put((updated_cost, next_node))
+                    priority = updated_cost + self.heuristic(next_node, self.goal)
+                    self.frontier.put((priority, next_node))
                     self.reached_from[next_node] = current_node
                     self.update_history()
         self.update_history()
+        return goal_reached
 
     def reconstruct_best_path(self) -> list[Coordinate]:
         current_node = self.goal
@@ -120,6 +129,16 @@ class SingleAgentAStar:
         path.append(self.start)
         path.reverse()
         return path
+
+
+def l1_norm(start: Coordinate, end: Coordinate) -> int:
+    """Manhattan distance between two points, also known as taxicab metric"""
+    return abs(start[0] - end[0]) + abs(start[1] - end[1])
+
+
+def linf_norm(start: Coordinate, end: Coordinate) -> int:
+    """Chessboard distance between two points, also known as Chebyshev distance"""
+    return max(abs(start[0] - end[0]), abs(start[1] - end[1]))
 
 
 def animation_step(
@@ -181,7 +200,7 @@ def animate_search(
         animation_step,
         fargs=(im, history, path),
         frames=len(history) + len(path) - 1,
-        interval=500,
+        interval=200,
         repeat=False,
     )
 
@@ -200,6 +219,18 @@ def main() -> None:
     obstacle_cost = config["Obstacles"].getint("movement_cost")
     obstacles = literal_eval(config["Obstacles"]["obstacles"])
     barriers = literal_eval(config["Obstacles"]["barriers"])
+    norm = config["Heuristic"]["norm"]
+
+    if norm == "L1":
+        heuristic = l1_norm
+    elif norm == "Linf":
+        heuristic = linf_norm
+    else:
+        print(
+            f"Invalid option for ['Heuristic']['norm'] specified "
+            f"(expected one of [L1, Linf], got {norm}). Defaulting to using L1 norm."
+        )
+        heuristic = l1_norm
 
     search = SingleAgentAStar(
         grid_height,
@@ -209,9 +240,17 @@ def main() -> None:
         obstacles,
         obstacle_cost,
         barriers,
+        heuristic,
     )
-    search.perform_search()
-    path = search.reconstruct_best_path()
+    goal_found = search.perform_search()
+    if goal_found:
+        path = search.reconstruct_best_path()
+        print(f"Total cost to reach goal: {search.cost_to_reach[(goal_x, goal_y)]}")
+        print(f"Iterations taken: {search.iterations}")
+        print(f"Peak queue size: {search.max_queue_size}")
+    else:
+        path = []
+        print("No path found. Goal was unreachable.")
 
     animate_search(
         grid_height,
