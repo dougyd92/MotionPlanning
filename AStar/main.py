@@ -2,10 +2,11 @@
 from collections import deque
 from configparser import ConfigParser
 from enum import IntEnum
+from typing import Any
 
-from matplotlib.animation import FuncAnimation  # type: ignore
-from matplotlib.colors import ListedColormap  # type: ignore
-import matplotlib.pyplot as plt  # type: ignore
+from matplotlib.animation import FuncAnimation
+from matplotlib.colors import ListedColormap
+import matplotlib.pyplot as plt
 import numpy as np
 from typing_extensions import TypeAlias
 
@@ -62,12 +63,14 @@ class SingleAgentAStar:
         grid[self.start[1]][self.start[0]] = NodeState.START
         self.history.append(grid)
 
-    def find_best_path(self) -> None:
+    def perform_search(self) -> None:
         self.frontier.append(self.start)
         self.reached_from[self.start] = self.start
 
         while len(self.frontier) > 0:
             current_node = self.frontier.popleft()
+            if current_node == self.goal:
+                break
             for next_node in self.get_neighbors(current_node):
                 if next_node not in self.reached_from:
                     self.frontier.append(next_node)
@@ -75,7 +78,7 @@ class SingleAgentAStar:
                     self.update_history()
         self.update_history()
 
-    def reconstruct_path(self) -> list[Coordinate]:
+    def reconstruct_best_path(self) -> list[Coordinate]:
         current_node = self.goal
         path = []
         while current_node != self.start:
@@ -86,13 +89,14 @@ class SingleAgentAStar:
         return path
 
 
-def animation_step(i, im, history: list[np.ndarray], path: list[Coordinate]):
+def animation_step(
+    i: int, im: Any, history: list[np.ndarray], path: list[Coordinate]
+) -> list[Any]:
     if i < len(history):
         # Draw each iteration of the search algorithm
         im.set_array(history[i])
     else:
         # Animate the path that was found
-        im.set_array(history[0]) #TODO decide if I want this, or leave it to show which areas never had to be explored
         j = i - len(history)
         (from_x, from_y) = path[j]
         (to_x, to_y) = path[j + 1]
@@ -144,7 +148,7 @@ def animate_search(
     plt.show()
 
 
-def main():
+def main() -> None:
     config = ConfigParser()
     config.read("single_agent.ini")
     grid_width = config["Grid"].getint("width")
@@ -159,8 +163,8 @@ def main():
     search = SingleAgentAStar(
         grid_height, grid_width, (robot_x, robot_y), (goal_x, goal_y)
     )
-    search.find_best_path()
-    path = search.reconstruct_path()
+    search.perform_search()
+    path = search.reconstruct_best_path()
 
     animate_search(
         grid_height,
